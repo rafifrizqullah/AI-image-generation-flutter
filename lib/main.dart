@@ -48,25 +48,25 @@ class _MyHomePageState extends State<MyHomePage> {
 
     try {
       /// Real image generation
-      // OpenAIImageModel image = await OpenAI.instance.image.create(
-      //   prompt: _promptController.text,
-      //   model: 'dall-e-3',
-      //   n: 1,
-      // );
+      OpenAIImageModel image = await OpenAI.instance.image.create(
+        prompt: prompt,
+        model: 'dall-e-3',
+        n: 1,
+      );
 
-      // setState(() {
-      //   _imageUrl = image.data.first.url;
-      //   _isLoading = false;
-      // });
+      setState(() {
+        _imageUrl = image.data.first.url;
+        _isLoading = false;
+      });
 
 
       /// Simulate image generation
-      await Future.delayed(const Duration(seconds: 2));
+      // await Future.delayed(const Duration(seconds: 2));
 
-      setState(() {
-        _imageUrl = "https://imgur.com/HEAWRxy.png";
-        _isLoading = false;
-      });
+      // setState(() {
+      //   _imageUrl = "https://imgur.com/HEAWRxy.png";
+      //   _isLoading = false;
+      // });
     } catch (e) {
       setState(() {
         _isLoading = false;

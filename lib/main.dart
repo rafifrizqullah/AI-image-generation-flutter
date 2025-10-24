@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:dart_openai/dart_openai.dart';
+import 'package:flutter_application_1/env/env.dart';
 
 void main() {
-  OpenAI.apiKey = "openai-api-key";
+  OpenAI.apiKey = Env.apiKey;
   OpenAI.showLogs = true;
 
   runApp(const MyApp());
@@ -58,7 +59,6 @@ class _MyHomePageState extends State<MyHomePage> {
         _imageUrl = image.data.first.url;
         _isLoading = false;
       });
-
 
       /// Simulate image generation
       // await Future.delayed(const Duration(seconds: 2));
@@ -125,9 +125,7 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
             const SizedBox(height: 20),
-            ChatInputField(
-              onSend: _generateImage,
-            ),
+            ChatInputField(onSend: _generateImage),
           ],
         ),
       ),
@@ -186,8 +184,10 @@ class _ChatInputFieldState extends State<ChatInputField> {
                     hintText: "Describe your image here",
                     border: InputBorder.none,
                     isDense: true,
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
                   ),
                 ),
               ),
@@ -199,14 +199,8 @@ class _ChatInputFieldState extends State<ChatInputField> {
           // Buttons row
           Row(
             children: [
-              IconButton(
-                icon: const Icon(Icons.add),
-                onPressed: () {},
-              ),
-              IconButton(
-                icon: const Icon(Icons.tune),
-                onPressed: () {},
-              ),
+              IconButton(icon: const Icon(Icons.add), onPressed: () {}),
+              IconButton(icon: const Icon(Icons.tune), onPressed: () {}),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.send_rounded),

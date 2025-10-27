@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,22 @@ import 'package:dart_openai/dart_openai.dart';
 import 'package:flutter_application_1/env/env.dart';
 import 'package:http/http.dart' as http;
 import 'package:mime/mime.dart';
+
+enum AIProvider {
+  openai,
+  gemini,
+}
+
+extension AIProviderExtension on AIProvider {
+  String get displayName {
+    switch (this) {
+      case AIProvider.openai:
+        return 'OpenAI DALL-E 3';
+      case AIProvider.gemini:
+        return 'Google Gemini';
+    }
+  }
+}
 
 void main() {
   OpenAI.apiKey = Env.apiKey;
@@ -43,9 +60,11 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   final TextEditingController _promptController = TextEditingController();
   String? _imageUrl;
+  Uint8List? _imageBytes;
   String? _caption;
   File? _selectedFile;
   bool _isLoading = false;
+  AIProvider _selectedProvider = AIProvider.openai;
 
   void _handleFileSelected(File file) {
     print("Selected file: ${file.path}");
@@ -57,7 +76,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _handleOnSend(String prompt) async {
     if (_selectedFile != null) {
-      final dataUrl = await encodeImageToDataUrl(_selectedFile!);
       // _analyzeImage(prompt, dataUrl);
       captionImage(prompt, _selectedFile!.path);
       // mockCaptionImage(prompt, _selectedFile!.path);
@@ -72,37 +90,54 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       _isLoading = true;
       _imageUrl = null;
+      _imageBytes = null;
     });
 
     try {
-      /// Real image generation
-      OpenAIImageModel image = await OpenAI.instance.image.create(
-        prompt: prompt,
-        model: 'dall-e-3',
-        n: 1,
-      );
+      String? imageUrl;
+      Uint8List? imageBytes;
+      
+      switch (_selectedProvider) {
+        case AIProvider.openai:
+          imageUrl = await _generateImageWithOpenAI(prompt);
+          break;
+        case AIProvider.gemini:
+          imageBytes = await _generateImageWithGemini(prompt);
+          break;
+      }
 
-      setState(() {
-        _imageUrl = image.data.first.url;
-        _isLoading = false;
-      });
+      print('Image url: $imageUrl');
+      print('Image bytes: $imageBytes');
 
-      /// Simulate image generation
-      // await Future.delayed(const Duration(seconds: 2));
-
-      // setState(() {
-      //   _imageUrl = "https://imgur.com/HEAWRxy.png";
-      //   _isLoading = false;
-      // });
+      if (imageUrl != null || imageBytes != null) {
+        setState(() {
+          _imageUrl = imageUrl;
+          _imageBytes = imageBytes;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to generate image with ${_selectedProvider.displayName}'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;
       });
-      print('❌ OpenAI API error: ${e.toString()}');
+      print('❌ ${_selectedProvider.displayName} API error: ${e.toString()}');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('OpenAI Error: ${e.toString()}'),
+            content: Text('${_selectedProvider.displayName} Error: ${e.toString()}'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 5),
           ),
@@ -111,52 +146,97 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> _analyzeImage(String prompt, String file) async {
+  Future<String?> _generateImageWithOpenAI(String prompt) async {
+    OpenAIImageModel image = await OpenAI.instance.image.create(
+      prompt: prompt,
+      model: 'dall-e-3',
+      n: 1,
+    );
+    return image.data.first.url;
+  }
+
+  Future<Uint8List?> _generateImageWithGemini(String prompt) async {
+    const String endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent';
+    final String apiKey = Env.geminiApiKey;
+
+    final body = jsonEncode({
+      "contents": [
+        {
+          "parts": [
+            {"text": prompt}
+          ]
+        }
+      ]
+    });
+
     try {
-      const url = 'https://api.openai.com/v1/responses';
-
-      final headers = {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${Env.apiKey}',
-      };
-
-      final body = {
-        "model": "gpt-4.1",
-        "input": [
-          {
-            "role": "user",
-            "content": [
-              {"type": "input_text", "text": prompt},
-              {"type": "input_image", "image_url": file},
-            ],
-          },
-        ],
-      };
-
-      final response = await http.post(
-        Uri.parse(url),
-        headers: headers,
-        body: jsonEncode(body),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$endpoint?key=$apiKey'),
+            headers: {"Content-Type": "application/json"},
+            body: body,
+          );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        print(const JsonEncoder.withIndent('  ').convert(data));
+        // final data = jsonDecode(response.body);
+        
+        // Extract the base64 image data from the response
+        // final candidates = data['candidates'] as List?;
+        // if (candidates != null && candidates.isNotEmpty) {
+        //   final content = candidates[0]['content'];
+        //   final parts = content['parts'] as List?;
+          
+        //   if (parts != null && parts.isNotEmpty) {
+        //     for (final part in parts) {
+        //       if (part['inlineData'] != null) {
+        //         final inlineData = part['inlineData'];
+        //         final imageData = inlineData['data'] as String?;
+        //         final mimeType = inlineData['mimeType'] as String?;
+                
+        //         if (imageData != null) {
+        //           // Convert base64 to data URL for display
+        //           return 'data:$mimeType;base64,$imageData';
+        //         }
+        //       }
+        //     }
+        //   }
+        // }
+        
+        // print('📝 Gemini response: ${data.toString()}');
+        // return null;
+
+
+        final json = jsonDecode(response.body);
+        
+        print('📝 Gemini response: ${json.toString()}');
+
+        final parts = json['candidates']?[0]?['content']?['parts'] as List?;
+        if (parts != null) {
+          for (final part in parts) {
+            if (part['text'] != null) {
+              print('📝 Text: ${part['text']}');
+            } else if (part['inlineData'] != null) {
+              final dataString = part['inlineData']?['data'];
+              if (dataString != null) {
+                return base64Decode(dataString);
+              } else {
+                print('⚠️ Tidak ada field inlineData.data pada response');
+              }
+            }
+          }
+        } else {
+          print('⚠️ Tidak ada parts pada response');
+        }
       } else {
         print('Error ${response.statusCode}: ${response.body}');
+        throw Exception('Gemini API error: ${response.statusCode} - ${response.body}');
       }
-    } on Exception catch (e) {
-      // TODO
-      setState(() {
-        _isLoading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
-      }
+    } catch (e) {
+      print('❌ Gemini image generation error: ${e.toString()}');
+      rethrow;
     }
   }
+
 
   Future<void> captionImage(String prompt, String imagePath) async {
     setState(() {
@@ -214,15 +294,15 @@ class _MyHomePageState extends State<MyHomePage> {
             Uri.parse('$endpoint?key=$apiKey'),
             headers: {"Content-Type": "application/json"},
             body: body,
-          )
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () {
-              throw Exception(
-                'Request timeout - please check your internet connection',
-              );
-            },
           );
+          // .timeout(
+          //   const Duration(seconds: 30),
+          //   onTimeout: () {
+          //     throw Exception(
+          //       'Request timeout - please check your internet connection',
+          //     );
+          //   },
+          // );
 
       // 5️⃣ Tampilkan hasil
       if (response.statusCode == 200) {
@@ -359,6 +439,32 @@ Gadis itu mengenakan kemeja putih lengan panjang di balik rompi atau sweter abu-
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: DropdownButton<AIProvider>(
+              value: _selectedProvider,
+              onChanged: (AIProvider? newValue) {
+                if (newValue != null) {
+                  setState(() {
+                    _selectedProvider = newValue;
+                  });
+                }
+              },
+              items: AIProvider.values.map<DropdownMenuItem<AIProvider>>((AIProvider provider) {
+                return DropdownMenuItem<AIProvider>(
+                  value: provider,
+                  child: Text(provider.displayName),
+                );
+              }).toList(),
+              underline: Container(),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimary,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -371,7 +477,7 @@ Gadis itu mengenakan kemeja putih lengan panjang di balik rompi atau sweter abu-
                   child: Center(
                     child: _isLoading
                         ? const CircularProgressIndicator()
-                        : _imageUrl != null
+                        : (_imageUrl != null || _imageBytes != null)
                         ? Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -383,7 +489,12 @@ Gadis itu mengenakan kemeja putih lengan panjang di balik rompi atau sweter abu-
                                 ),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(12),
-                                  child: _imageUrl!.startsWith('file://')
+                                  child: _imageBytes != null
+                                      ? Image.memory(
+                                          _imageBytes!,
+                                          fit: BoxFit.contain,
+                                        )
+                                      : _imageUrl!.startsWith('file://')
                                       ? Image.file(
                                           File(_imageUrl!.substring(7)),
                                           fit: BoxFit.contain,
@@ -393,8 +504,9 @@ Gadis itu mengenakan kemeja putih lengan panjang di balik rompi atau sweter abu-
                                           fit: BoxFit.contain,
                                           loadingBuilder:
                                               (context, child, loadingProgress) {
-                                            if (loadingProgress == null)
+                                            if (loadingProgress == null) {
                                               return child;
+                                            }
                                             return Center(
                                               child: CircularProgressIndicator(
                                                 value:

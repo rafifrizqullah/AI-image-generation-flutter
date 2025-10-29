@@ -25,6 +25,36 @@ extension AIProviderExtension on AIProvider {
   }
 }
 
+enum ImageMode {
+  generate,
+  edit,
+  caption,
+}
+
+extension ImageModeExtension on ImageMode {
+  String get displayName {
+    switch (this) {
+      case ImageMode.generate:
+        return 'Generate Image';
+      case ImageMode.edit:
+        return 'Edit Image';
+      case ImageMode.caption:
+        return 'Caption Image';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case ImageMode.generate:
+        return Icons.auto_awesome;
+      case ImageMode.edit:
+        return Icons.edit;
+      case ImageMode.caption:
+        return Icons.description;
+    }
+  }
+}
+
 void main() {
   OpenAI.apiKey = Env.apiKey;
   OpenAI.showLogs = true;
@@ -74,12 +104,23 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  void _handleOnSend(String prompt) async {
+  void _handleOnSend(String prompt, ImageMode mode) async {
     if (_selectedFile != null) {
-      // _analyzeImage(prompt, dataUrl);
-      captionImage(prompt, _selectedFile!.path);
-      // mockCaptionImage(prompt, _selectedFile!.path);
+      // Handle image operations based on selected mode
+      switch (mode) {
+        case ImageMode.edit:
+          _editImageWithGemini(prompt, _selectedFile!.path);
+          break;
+        case ImageMode.caption:
+          captionImage(prompt, _selectedFile!.path);
+          break;
+        case ImageMode.generate:
+          // Even with a file selected, user wants to generate new image
+          _generateImage(prompt);
+          break;
+      }
     } else {
+      // No file selected, always generate
       _generateImage(prompt);
     }
   }
@@ -178,34 +219,6 @@ class _MyHomePageState extends State<MyHomePage> {
           );
 
       if (response.statusCode == 200) {
-        // final data = jsonDecode(response.body);
-        
-        // Extract the base64 image data from the response
-        // final candidates = data['candidates'] as List?;
-        // if (candidates != null && candidates.isNotEmpty) {
-        //   final content = candidates[0]['content'];
-        //   final parts = content['parts'] as List?;
-          
-        //   if (parts != null && parts.isNotEmpty) {
-        //     for (final part in parts) {
-        //       if (part['inlineData'] != null) {
-        //         final inlineData = part['inlineData'];
-        //         final imageData = inlineData['data'] as String?;
-        //         final mimeType = inlineData['mimeType'] as String?;
-                
-        //         if (imageData != null) {
-        //           // Convert base64 to data URL for display
-        //           return 'data:$mimeType;base64,$imageData';
-        //         }
-        //       }
-        //     }
-        //   }
-        // }
-        
-        // print('📝 Gemini response: ${data.toString()}');
-        // return null;
-
-
         final json = jsonDecode(response.body);
         
         print('📝 Gemini response: ${json.toString()}');
@@ -234,6 +247,133 @@ class _MyHomePageState extends State<MyHomePage> {
     } catch (e) {
       print('❌ Gemini image generation error: ${e.toString()}');
       rethrow;
+    }
+    return null;
+  }
+
+  // Image + Text-to-Image (Editing) using Gemini
+  Future<void> _editImageWithGemini(String prompt, String imagePath) async {
+    setState(() {
+      _isLoading = true;
+      _imageBytes = null;
+      _imageUrl = null;
+      _caption = null;
+    });
+
+    try {
+      const String endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent';
+      final String apiKey = Env.geminiApiKey;
+
+      // 1️⃣ Read the local file
+      final file = File(imagePath);
+      if (!await file.exists()) {
+        print('❌ File not found: $imagePath');
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // 2️⃣ Read file contents and convert to Base64
+      final bytes = await file.readAsBytes();
+      final base64Image = base64Encode(bytes);
+
+      // 3️⃣ Determine MIME type
+      String mimeType = 'image/jpeg';
+      if (imagePath.endsWith('.png')) mimeType = 'image/png';
+      if (imagePath.endsWith('.webp')) mimeType = 'image/webp';
+      if (imagePath.endsWith('.jpg')) mimeType = 'image/jpeg';
+
+      // 4️⃣ Create payload with both text and image
+      final body = jsonEncode({
+        "contents": [
+          {
+            "parts": [
+              {"text": prompt},
+              {
+                "inline_data": {
+                  "mime_type": mimeType,
+                  "data": base64Image
+                }
+              },
+            ]
+          }
+        ]
+      });
+
+      // 5️⃣ Send to Gemini REST API
+      final response = await http.post(
+        Uri.parse('$endpoint?key=$apiKey'),
+        headers: {"Content-Type": "application/json"},
+        body: body,
+      );
+
+      // 6️⃣ Process response
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        
+        print('📝 Gemini edit response: ${json.toString()}');
+
+        final parts = json['candidates']?[0]?['content']?['parts'] as List?;
+        if (parts != null) {
+          for (final part in parts) {
+            if (part['text'] != null) {
+              print('📝 Text: ${part['text']}');
+            } else if (part['inlineData'] != null) {
+              final dataString = part['inlineData']?['data'];
+              if (dataString != null) {
+                final imageBytes = base64Decode(dataString);
+                setState(() {
+                  _imageBytes = imageBytes;
+                  _isLoading = false;
+                });
+                print('✅ Image edited successfully');
+                return;
+              }
+            }
+          }
+        }
+        
+        // If no image data found in response
+        setState(() {
+          _isLoading = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No image generated in response'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      } else {
+        print('Error ${response.statusCode}: ${response.body}');
+        setState(() {
+          _isLoading = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: ${response.statusCode}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      print('❌ Image editing error: ${e.toString()}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
@@ -559,7 +699,7 @@ Gadis itu mengenakan kemeja putih lengan panjang di balik rompi atau sweter abu-
 }
 
 class ChatInputField extends StatefulWidget {
-  final void Function(String text)? onSend;
+  final void Function(String text, ImageMode mode)? onSend;
   final void Function(File file)? onFileSelected;
 
   const ChatInputField({super.key, this.onSend, this.onFileSelected});
@@ -572,6 +712,7 @@ class _ChatInputFieldState extends State<ChatInputField> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   File? _selectedImage;
+  ImageMode _selectedMode = ImageMode.generate;
 
   @override
   void dispose() {
@@ -583,7 +724,7 @@ class _ChatInputFieldState extends State<ChatInputField> {
   void _handleSend() {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
-    widget.onSend?.call(text);
+    widget.onSend?.call(text, _selectedMode);
     _removeImage();
     _controller.clear();
     // Hide the on-screen keyboard using proper focus management
@@ -595,6 +736,23 @@ class _ChatInputFieldState extends State<ChatInputField> {
       _selectedImage = null;
     });
     print(_selectedImage);
+  }
+
+  String _getHintText() {
+    switch (_selectedMode) {
+      case ImageMode.generate:
+        return _selectedImage != null 
+            ? "Describe the image you want to generate"
+            : "Describe the image you want to create";
+      case ImageMode.edit:
+        return _selectedImage != null
+            ? "Describe how to edit this image"
+            : "Add an image first to edit it";
+      case ImageMode.caption:
+        return _selectedImage != null
+            ? "Ask about this image or leave blank for caption"
+            : "Add an image first to get a caption";
+    }
   }
 
   Future<void> _handleAddFile() async {
@@ -699,11 +857,11 @@ class _ChatInputFieldState extends State<ChatInputField> {
                   controller: _controller,
                   focusNode: _focusNode,
                   maxLines: null,
-                  decoration: const InputDecoration(
-                    hintText: "Describe your image here",
+                  decoration: InputDecoration(
+                    hintText: _getHintText(),
                     border: InputBorder.none,
                     isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
+                    contentPadding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 8,
                     ),
@@ -722,7 +880,46 @@ class _ChatInputFieldState extends State<ChatInputField> {
                 icon: const Icon(Icons.add),
                 onPressed: _handleAddFile,
               ),
-              // IconButton(icon: const Icon(Icons.tune), onPressed: () {}),
+              // Mode selector
+              PopupMenuButton<ImageMode>(
+                icon: Icon(_selectedMode.icon),
+                tooltip: _selectedMode.displayName,
+                onSelected: (ImageMode mode) {
+                  setState(() {
+                    _selectedMode = mode;
+                  });
+                },
+                itemBuilder: (BuildContext context) {
+                  return ImageMode.values.map((ImageMode mode) {
+                    return PopupMenuItem<ImageMode>(
+                      value: mode,
+                      child: Row(
+                        children: [
+                          Icon(
+                            mode.icon,
+                            size: 20,
+                            color: _selectedMode == mode
+                                ? Theme.of(context).colorScheme.primary
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            mode.displayName,
+                            style: TextStyle(
+                              color: _selectedMode == mode
+                                  ? Theme.of(context).colorScheme.primary
+                                  : null,
+                              fontWeight: _selectedMode == mode
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList();
+                },
+              ),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.send_rounded),
